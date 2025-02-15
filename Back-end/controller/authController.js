@@ -1,9 +1,9 @@
 import statusCodes, { StatusCodes } from "http-status-codes";
 import UserModel from "../models/UserModel.js";
 import { hashPassword, comparePassword } from "../utils/hashingPassword.js";
-import { createJwt } from "../utils/tokenUtils.js";
+import { createJwt, verifyJwt } from "../utils/tokenUtils.js";
 import nodemailer from "nodemailer";
-import { v4 as uuidv4 } from "uuid";
+
 //node mailer stuff
 
 let transporter = nodemailer.createTransport({
@@ -34,39 +34,48 @@ export const register = async (req, res) => {
     req.body.dateOfBirth = date;
     const passowrdHash = await hashPassword(req.body.password);
 
-    req.body.password = passowrdHash;
-    const data = req.body;
+    const { confirmPassword, ...data } = req.body;
+    data.password = passowrdHash;
 
-    // Generate a random 4-digit verification code
-    const verificationCode = Math.floor(Math.random() * 9000 + 1000).toString();
-    const hashVerfCode = await hashPassword(verificationCode);
+    if (confirmPassword === req.body.password) {
+      // Generate a random 4-digit verification code
+      const verificationCode = Math.floor(
+        Math.random() * 9000 + 1000
+      ).toString();
+      const hashVerfCode = await hashPassword(verificationCode);
 
-    let mailOptions = {
-      from: "ckgames044@gmail.com",
-      to: req.body.email,
-      subject: "Verify your email - OTP code",
-      text: `your verification code is ${verificationCode}`,
-    };
+      let mailOptions = {
+        from: "ckgames044@gmail.com",
+        to: req.body.email,
+        subject: "Verify your email - OTP code",
+        text: `your verification code is ${verificationCode}`,
+      };
+      ``;
 
-    await transporter.sendMail(mailOptions);
+      await transporter.sendMail(mailOptions);
 
-    // set isVerified to false
-    req.body.isVerified = false;
-    req.body.verificationCode = hashVerfCode;
-    const token = createJwt({ email: req.body.email });
-    const fiveMinute = 1000 * 60 * 5;
+      // set isVerified to false
+      const token = createJwt({ email: req.body.email });
+      const oneDay = 1000 * 60 * 60 * 24;
+      res.cookie("token", token, {
+        httpOnly: true,
+        expires: new Date(Date.now() + oneDay),
+        secure: false,
+      });
 
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "development",
-      expiresIn: new Date(Date.now() + fiveMinute),
-    });
-    const user = await UserModel.create(data);
+      data.verificationCode = hashVerfCode;
+      data.isVerified = false;
+      const user = await UserModel.create(data);
 
-    res.status(statusCodes.CREATED).json({
-      msg: "Registration successful. Please check your email to verify your account.",
-      verificationCode: verificationCode,
-    });
+      res.status(statusCodes.CREATED).json({
+        msg: "Registration successful. Please check your email to verify your account.",
+        verificationCode: verificationCode,
+      });
+    } else {
+      res
+        .status(StatusCodes.BAD_REQUEST)
+        .json({ msg: "password and confirm password are not equal" });
+    }
   } catch (error) {
     console.log(error);
     res
@@ -75,41 +84,145 @@ export const register = async (req, res) => {
   }
 };
 
-export const verifyEmail = async (req, res) => {
+export const verifyOTPRegistration = async (req, res) => {
   const { email } = req.user;
-
-  const user = await findOne({ email });
+  const user = await UserModel.findOne({ email });
   if (!user) {
+    return res.status(StatusCodes.UNAUTHORIZED).json({
+      msg: "you are not registered please take a go and do a registeration",
+    });
+  }
+  if (user.isVerified) {
     return res
-      .status(StatusCodes.UNAUTHORIZED)
-      .json({ msg: "unable to access" });
+      .status(StatusCodes.CONFLICT)
+      .json({ msg: "you are already verified" });
   }
 
-  const { verificationCode } = user.verificationCode;
+  const { verificationCode } = user;
 
   const isMatch = await comparePassword(
     req.body.verificationCode,
     verificationCode
   );
-
   if (!isMatch) {
     return res
-      .status(StatusCodes.BAD_REQUEST)
+      .status(StatusCodes.UNAUTHORIZED)
       .json({ msg: "invalid verfication code" });
   }
-  res.status(StatusCodes.OK).json({ msg: "now you can login" });
+  user.isVerified = true;
+  user.verificationCode = null;
+  await user.save();
+  res.status(StatusCodes.OK).json({ msg: "you are verified" });
+};
+export const verifyEmailForgetPassword = async (req, res) => {
+  const { email } = req.body;
+  const user = await UserModel.findOne({ email });
+  if (!user) {
+    return res
+      .status(StatusCodes.FORBIDDEN)
+      .json({ msg: "this user does not exist" });
+  }
+  const verificationCode = Math.floor(Math.random() * 9000 + 1000).toString();
+  let mailOptions = {
+    from: "ckgames044@gmail.com",
+    to: req.body.email,
+    subject: "Verify your email - OTP code",
+    text: `your verification code is ${verificationCode}`,
+  };
+
+  await transporter.sendMail(mailOptions);
+
+  const token = createJwt({ email });
+  const oneDay = 1000 * 60 * 60 * 24;
+  res.cookie("token", token, {
+    httpOnly: true,
+    expires: new Date(Date.now() + oneDay),
+    secure: false,
+  });
+
+  user.verificationCode = await hashPassword(verificationCode);
+
+  await user.save();
+
+  res
+    .status(StatusCodes.OK)
+    .json({ msg: "we have sended you a verfication code go ahead and enter" });
+};
+
+export const verifyOTPForgetPassword = async (req, res) => {
+  const { email } = req.user;
+  const user = await UserModel.findOne({ email });
+  if (!user) {
+    return res.status(StatusCodes.UNAUTHORIZED).json({
+      msg: "you are not registered please take a go and do a registeration",
+    });
+  }
+  if (!user.isVerified) {
+    return res
+      .status(StatusCodes.CONFLICT)
+      .json({
+        msg: "you are registered but not veirfied please verify your account",
+      });
+  }
+
+  const { verificationCode } = user;
+
+  const isMatch = await comparePassword(
+    req.body.verificationCode,
+    verificationCode
+  );
+  if (!isMatch) {
+    return res
+      .status(StatusCodes.UNAUTHORIZED)
+      .json({ msg: "invalid verfication code" });
+  }
+  user.verificationCode = null;
+  await user.save();
+  res.status(StatusCodes.OK).json({ msg: "verification successfull" });
+};
+export const forgetPass = async (req, res) => {
+  const { email } = req.user;
+  const data = req.body;
+  console.log("data", data);
+
+  if (data.password === data.confirmPassword) {
+    data.password = await hashPassword(data.password);
+    const user = await UserModel.findOneAndUpdate(
+      { email },
+      { password: data.password },
+      { new: true }
+    );
+    res
+      .status(StatusCodes.OK)
+      .json({ msg: "password changed successfully", user: user });
+  }
+  else{
+    
+  }
 };
 
 export const login = async (req, res) => {
   try {
     const email = req.body.email;
     const user = await UserModel.findOne({ email });
+    if (!user.isVerified) {
+      return res.status(StatusCodes.FORBIDDEN).json({
+        msg: "your registeration is not verified please verfiy your email after registeration",
+      });
+    }
     const isMatchPassword = await comparePassword(
       req.body.password,
       user.password
     );
 
+    console.log("isMatchPassword", isMatchPassword);
+
     if (user && isMatchPassword) {
+      res.cookie("token", "", {
+        httpOnly: true,
+        expires: new Date(0),
+        secure: process.env.NODE_ENV === "production",
+      });
       const token = createJwt({ userId: user._id, role: user.role });
       const oneDay = 1000 * 60 * 60 * 24;
       res.cookie("token", token, {
@@ -117,7 +230,6 @@ export const login = async (req, res) => {
         expiresIn: new Date(Date.now() + oneDay),
         secure: process.env.NODE_ENV === "production",
       });
-
       res.status(StatusCodes.OK).json({ msg: "login successful" });
     } else {
       res

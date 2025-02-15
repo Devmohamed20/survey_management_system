@@ -1,3 +1,4 @@
+import React from "react";
 import { Form, Link, redirect } from "react-router-dom";
 import "../styles/pages/authentication.css";
 import OTPInput from "./OtpInput";
@@ -5,26 +6,25 @@ import { useState } from "react";
 import axios from "axios";
 
 export const action = async ({ request }) => {
-  console.log("hello");
   const formData = await request.formData();
   const otp = formData.get("otp");
   const data = { verificationCode: otp };
   try {
     const response = await axios.post(
-      "http://localhost:3005/api/v1/auth/register/verifyOTPRegistration",
+      "http://localhost:3005/api/v1/auth/forget-password/verify-otp-forget-password",
       data,
       {
         withCredentials: true,
       }
     );
     console.log("response", response);
-    return redirect("/");
+    return redirect("/forget-password/update-password");
   } catch (error) {
     console.log(error);
     return error;
   }
 };
-function VerificationCode() {
+function VerificationCodeForgetPassword() {
   const [otp, setOtp] = useState("");
   const handleComplete = (otp) => {
     setOtp(otp);
@@ -47,5 +47,4 @@ function VerificationCode() {
     </div>
   );
 }
-
-export default VerificationCode;
+export default VerificationCodeForgetPassword;

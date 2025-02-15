@@ -1,6 +1,7 @@
 import { body, validationResult } from "express-validator";
 import { StatusCodes } from "http-status-codes";
 import UserModel from "../models/UserModel.js";
+import { verifyJwt } from "../utils/tokenUtils.js";
 
 const withValidationError = (validation) => {
   return [
@@ -61,3 +62,22 @@ export const validationLoginInput = withValidationError([
     .isLength({ min: 8 })
     .withMessage("password must be atleast 8 characters"),
 ]);
+
+export const authenticationToken = async (req, res, next) => {
+  const { token } = req.cookies;
+  if (!token) {
+    return res
+      .status(StatusCodes.UNAUTHORIZED)
+      .json({ msg: "no token , unable to aunthenticate" });
+  }
+  try {
+    const decoded = verifyJwt(token);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    console.log(error);
+    res
+      .status(StatusCodes.INTERNAL_SERVER_ERROR)
+      .json({ msg: "there is authentication problem" });
+  }
+};

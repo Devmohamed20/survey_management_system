@@ -11,7 +11,7 @@ const PasswordInput = () => {
             {/* Password Input Field */}
             <input
                 type={showPassword ? "text" : "password"}
-               
+                name="password"
                 className="password-input"
             />
 
